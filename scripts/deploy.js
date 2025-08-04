@@ -14,7 +14,7 @@ const {
 
 // Configuration
 const STACK_NAME = process.env.STACK_NAME || "mcp-oauth-demo";
-const REGION = process.env.AWS_REGION || "us-east-1";
+const REGION = process.env.AWS_REGION || "ap-northeast-1";
 const TEMPLATE_FILE = path.join(
   __dirname,
   "..",
@@ -26,6 +26,9 @@ const TEMPLATE_FILE = path.join(
 // Initialize CloudFormation client
 const cfn = new CloudFormationClient({ region: REGION });
 
+/**
+ * CloudFormationのスタックをデプロイする関数
+ */
 async function deployStack() {
   try {
     console.log("Starting MCP OAuth + DCR CloudFormation deployment...");
@@ -36,6 +39,7 @@ async function deployStack() {
     // Check if stack already exists
     let stackExists = false;
     try {
+      // スタックをデプロイする
       const describeCommand = new DescribeStacksCommand({
         StackName: STACK_NAME,
       });
@@ -80,6 +84,7 @@ async function deployStack() {
     if (stackExists) {
       console.log("Updating stack...");
       try {
+        // スタックがあれば差異を適用する
         const updateCommand = new UpdateStackCommand(params);
         await cfn.send(updateCommand);
         console.log("Waiting for stack update to complete...");
@@ -97,6 +102,7 @@ async function deployStack() {
       }
     } else {
       console.log("Creating stack...");
+      // スタックがなければ新規作成
       const createCommand = new CreateStackCommand(params);
       await cfn.send(createCommand);
       console.log("Waiting for stack creation to complete...");

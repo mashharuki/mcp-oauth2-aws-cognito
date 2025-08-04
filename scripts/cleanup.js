@@ -13,11 +13,14 @@ const {
 
 // Configuration
 const STACK_NAME = process.env.STACK_NAME || 'mcp-oauth-demo';
-const REGION = process.env.AWS_REGION || 'us-east-1';
+const REGION = process.env.AWS_REGION || 'ap-northeast-1';
 
 // Initialize CloudFormation client
 const cfn = new CloudFormationClient({ region: REGION });
 
+/**
+ * デプロイしたスタックをAWSから削除するスクリプト
+ */
 async function cleanupResources() {
   try {
     console.log(`Starting cleanup for stack: ${STACK_NAME}`);
@@ -65,6 +68,7 @@ async function cleanupResources() {
       
       // Delete the stack
       console.log(`Deleting stack: ${STACK_NAME}`);
+      // スタックを削除する
       const deleteCommand = new DeleteStackCommand({ StackName: STACK_NAME });
       await cfn.send(deleteCommand);
       

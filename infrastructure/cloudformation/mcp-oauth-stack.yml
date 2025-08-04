@@ -1,50 +1,61 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'MCP OAuth 2.1 with Dynamic Client Registration'
 
+# =====================================================
+# パラメータ設定
+# デプロイ時にカスタマイズ可能な値を定義
+# =====================================================
 Parameters:
   ProjectName:
     Type: String
     Default: mcp-oauth-demo
-    Description: Project name used for resource naming
+    Description: プロジェクト名（全てのリソース名のプレフィックスに使用）
   
   ClientCallbackUrl:
     Type: String
     Default: http://localhost:3000/callback
-    Description: Callback URL for the OAuth client
+    Description: 静的クライアント用のOAuthコールバックURL
   
   AutoClientCallbackUrl:
     Type: String
     Default: http://localhost:3002/callback
-    Description: Callback URL for the auto-discovery client
+    Description: 自動発見クライアント用のOAuthコールバックURL
 
   LogoutUrl:
     Type: String
     Default: http://localhost:3000/logout
-    Description: Logout URL for the OAuth flow
+    Description: ログアウト後のリダイレクトURL
 
+# =====================================================
+# AWSリソース定義
+# MCP OAuth 2.1システムに必要な全てのAWSサービスを構成
+# =====================================================
 Resources:
-  # Cognito User Pool
+  # =====================================================
+  # Cognito ユーザープール
+  # ユーザー認証とOAuth 2.1認証サーバーの中核となるサービス
+  # =====================================================
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
       UserPoolName: !Sub ${ProjectName}-user-pool
       AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: false
+        AllowAdminCreateUserOnly: false  # 一般ユーザーの自己登録を許可
       EmailConfiguration:
-        EmailSendingAccount: COGNITO_DEFAULT
-      MfaConfiguration: 'OFF'
+        EmailSendingAccount: COGNITO_DEFAULT  # Cognito標準のメール送信を使用
+      MfaConfiguration: 'OFF'  # MFA（多要素認証）は無効（デモ用）
       UsernameAttributes:
-        - email
+        - email  # メールアドレスをユーザー名として使用
       AutoVerifiedAttributes:
-        - email
+        - email  # メールアドレスの自動検証を有効
       Policies:
-        PasswordPolicy:
+        PasswordPolicy:  # パスワードポリシーの設定
           MinimumLength: 8
           RequireLowercase: true
           RequireUppercase: true
           RequireNumbers: false
           RequireSymbols: true
-      Schema:
+      Schema:  # ユーザー属性のスキーマ定義
         - Name: email
           AttributeDataType: String
           Mutable: true
@@ -54,77 +65,92 @@ Resources:
           Mutable: true
           Required: true
   
-  # User Pool Domain
+  # =====================================================
+  # Cognito ユーザープールドメイン
+  # ホストされたOAuth UIにアクセスするためのドメイン
+  # =====================================================
   UserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
     Properties:
-      Domain: !Sub ${ProjectName}-domain-${AWS::AccountId}
+      Domain: !Sub ${ProjectName}-domain-${AWS::AccountId}  # アカウントIDを含む一意なドメイン名
       UserPoolId: !Ref UserPool
   
-  # Static Client (Pre-configured)
+  # =====================================================
+  # 静的クライアント（事前設定済み）
+  # 従来のOAuthクライアント - 事前に設定されたクレデンシャルを使用
+  # =====================================================
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       UserPoolId: !Ref UserPool
       ClientName: !Sub ${ProjectName}-static-client
-      GenerateSecret: true
-      RefreshTokenValidity: 30
+      GenerateSecret: true  # クライアントシークレットを自動生成
+      RefreshTokenValidity: 30  # リフレッシュトークンの有効期限（30日）
       AllowedOAuthFlows:
-        - code
+        - code  # 認証コードフローを許可（OAuth 2.1標準）
       AllowedOAuthFlowsUserPoolClient: true
-      AllowedOAuthScopes:
+      AllowedOAuthScopes:  # 許可されるOAuthスコープ
         - openid
         - profile
         - email
       CallbackURLs:
-        - !Ref ClientCallbackUrl
+        - !Ref ClientCallbackUrl  # 認証成功時のリダイレクト先
       LogoutURLs:
-        - !Ref LogoutUrl
+        - !Ref LogoutUrl  # ログアウト時のリダイレクト先
       SupportedIdentityProviders:
-        - COGNITO
-      PreventUserExistenceErrors: ENABLED
-      EnableTokenRevocation: true
+        - COGNITO  # Cognito内部認証のみを使用
+      PreventUserExistenceErrors: ENABLED  # ユーザー存在確認エラーを防止（セキュリティ強化）
+      EnableTokenRevocation: true  # トークン取り消し機能を有効
       ExplicitAuthFlows:
-        - ALLOW_REFRESH_TOKEN_AUTH
-        - ALLOW_USER_SRP_AUTH
-      TokenValidityUnits:
+        - ALLOW_REFRESH_TOKEN_AUTH  # リフレッシュトークン認証を許可
+        - ALLOW_USER_SRP_AUTH  # SRP（Secure Remote Password）認証を許可
+      TokenValidityUnits:  # トークン有効期限の単位
         AccessToken: hours
         IdToken: hours
         RefreshToken: days
-      AccessTokenValidity: 1
-      IdTokenValidity: 1
+      AccessTokenValidity: 1  # アクセストークン有効期限（1時間）
+      IdTokenValidity: 1  # IDトークン有効期限（1時間）
   
-  # Resource Server (API)
+  # =====================================================
+  # リソースサーバー（MCP API）
+  # OAuth 2.1で保護されるAPIリソースとスコープを定義
+  # =====================================================
   ResourceServer:
     Type: AWS::Cognito::UserPoolResourceServer
     Properties:
       UserPoolId: !Ref UserPool
-      Identifier: mcp-api
+      Identifier: mcp-api  # リソースサーバーの識別子
       Name: MCP API
-      Scopes:
+      Scopes:  # APIアクセスのスコープ定義
         - ScopeName: read
-          ScopeDescription: Read access to MCP API
+          ScopeDescription: MCP APIへの読み取りアクセス
         - ScopeName: write
-          ScopeDescription: Write access to MCP API
+          ScopeDescription: MCP APIへの書き込みアクセス
   
-  # DynamoDB Table for DCR Clients
+  # =====================================================
+  # DynamoDB テーブル（DCR用）
+  # Dynamic Client Registrationで登録されたクライアント情報を保存
+  # =====================================================
   DcrClientsTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub ${ProjectName}-dcr-clients
-      BillingMode: PAY_PER_REQUEST
+      BillingMode: PAY_PER_REQUEST  # オンデマンド課金（使用量に応じて課金）
       AttributeDefinitions:
-        - AttributeName: client_id
+        - AttributeName: client_id  # クライアントIDをパーティションキーとして使用
           AttributeType: S
       KeySchema:
         - AttributeName: client_id
-          KeyType: HASH
+          KeyType: HASH  # ハッシュキー（プライマリキー）
   
-  # IAM Role for Lambda Functions
+  # =====================================================
+  # Lambda実行ロール
+  # Lambda関数がAWSサービスにアクセスするための権限設定
+  # =====================================================
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      AssumeRolePolicyDocument:
+      AssumeRolePolicyDocument:  # Lambdaサービスがこのロールを引き受けることを許可
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
@@ -132,41 +158,45 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole  # 基本的なログ出力権限
       Policies:
-        - PolicyName: CognitoAccess
+        - PolicyName: CognitoAccess  # Cognitoアクセス権限
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - cognito-idp:CreateUserPoolClient
-                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:CreateUserPoolClient  # 新しいクライアントの作成
+                  - cognito-idp:DescribeUserPoolClient  # クライアント情報の取得
                 Resource: !GetAtt UserPool.Arn
-        - PolicyName: DynamoDBAccess
+        - PolicyName: DynamoDBAccess  # DynamoDBアクセス権限
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
+                  - dynamodb:PutItem  # アイテムの追加
+                  - dynamodb:GetItem  # アイテムの取得
                 Resource: !GetAtt DcrClientsTable.Arn
   
-  # Lambda Functions
+  # =====================================================
+  # Lambda関数: クライアント登録
+  # Dynamic Client Registration（DCR）のメイン処理を行う
+  # RFC 7591に基づいたクライアント登録APIを実装
+  # =====================================================
   RegisterClientFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub ${ProjectName}-register-client
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: nodejs20.x
-      Timeout: 30
-      MemorySize: 256
+      Runtime: nodejs20.x  # Node.js 20.x ランタイム
+      Timeout: 30  # タイムアウト30秒
+      MemorySize: 256  # メモリ256MB
       Environment:
         Variables:
-          USER_POOL_ID: !Ref UserPool
-          DCR_CLIENTS_TABLE: !Ref DcrClientsTable
+          USER_POOL_ID: !Ref UserPool  # Cognitoユーザープール参照
+          DCR_CLIENTS_TABLE: !Ref DcrClientsTable  # DynamoDBテーブル参照
       Code:
         ZipFile: |
           const { CognitoIdentityProviderClient, CreateUserPoolClientCommand } = require('@aws-sdk/client-cognito-identity-provider');
@@ -174,45 +204,46 @@ Resources:
           const { marshall } = require('@aws-sdk/util-dynamodb');
           const crypto = require('crypto');
 
-          // Initialize AWS SDK clients
+          // AWS SDKクライアントの初期化
           const cognitoClient = new CognitoIdentityProviderClient();
           const dynamoClient = new DynamoDBClient();
 
-          // Configuration
+          // 環境変数から設定を取得
           const USER_POOL_ID = process.env.USER_POOL_ID;
           const DCR_CLIENTS_TABLE = process.env.DCR_CLIENTS_TABLE;
 
           /**
-           * Lambda function to handle dynamic client registration
+           * Dynamic Client Registration処理のメイン関数
+           * RFC 7591に基づいてクライアントを動的に登録
            */
           exports.handler = async (event) => {
             try {
-              console.log('Event received:', JSON.stringify(event));
+              console.log('受信イベント:', JSON.stringify(event));
               
-              // Parse request body
+              // リクエストボディをパース
               const body = JSON.parse(event.body || '{}');
               
-              // Validate required fields
+              // 必須フィールドの検証
               if (!body.redirect_uris || !Array.isArray(body.redirect_uris) || body.redirect_uris.length === 0) {
                 return formatResponse(400, { 
                   error: 'invalid_client_metadata',
-                  error_description: 'redirect_uris is required and must be an array'
+                  error_description: 'redirect_urisは必須で配列である必要があります'
                 });
               }
               
-              // Determine client name
+              // クライアント名の決定
               const clientName = body.client_name || `DCR Client ${Date.now()}`;
               
-              // Map requested scopes or use defaults
+              // 要求されたスコープのマッピング（デフォルト値を使用）
               const allowedScopes = body.scope ? body.scope.split(' ') : ['openid', 'profile', 'email', 'mcp-api/read'];
               
-              // Create client in Cognito
+              // Cognitoでクライアントを作成
               const createClientParams = {
                 UserPoolId: USER_POOL_ID,
                 ClientName: clientName,
-                GenerateSecret: true,
-                RefreshTokenValidity: 30, // 30 days
-                AllowedOAuthFlows: ['code'],
+                GenerateSecret: true,  // クライアントシークレットを自動生成
+                RefreshTokenValidity: 30, // 30日間有効
+                AllowedOAuthFlows: ['code'],  // 認証コードフローのみ許可
                 AllowedOAuthFlowsUserPoolClient: true,
                 AllowedOAuthScopes: allowedScopes,
                 CallbackURLs: body.redirect_uris,
@@ -223,22 +254,22 @@ Resources:
                   IdToken: 'hours',
                   RefreshToken: 'days'
                 },
-                AccessTokenValidity: 1, // 1 hour
-                IdTokenValidity: 1 // 1 hour
+                AccessTokenValidity: 1, // 1時間有効
+                IdTokenValidity: 1 // 1時間有効
               };
               
-              // Create the client in Cognito
+              // Cognitoでクライアントを作成
               const createClientCommand = new CreateUserPoolClientCommand(createClientParams);
               const cognitoResponse = await cognitoClient.send(createClientCommand);
               
-              console.log('Cognito client created:', cognitoResponse.UserPoolClient.ClientId);
+              console.log('Cognitoクライアント作成完了:', cognitoResponse.UserPoolClient.ClientId);
               
-              // Construct client registration response
+              // クライアント登録レスポンスの構築
               const registrationResponse = {
                 client_id: cognitoResponse.UserPoolClient.ClientId,
                 client_secret: cognitoResponse.UserPoolClient.ClientSecret,
                 client_id_issued_at: Math.floor(Date.now() / 1000),
-                client_secret_expires_at: 0, // Never expires
+                client_secret_expires_at: 0, // 無期限
                 redirect_uris: body.redirect_uris,
                 grant_types: ['authorization_code', 'refresh_token'],
                 token_endpoint_auth_method: 'client_secret_basic',
@@ -247,7 +278,7 @@ Resources:
                 scope: allowedScopes.join(' ')
               };
               
-              // Store client metadata in DynamoDB
+              // DynamoDBにクライアントメタデータを保存
               const dynamoItem = {
                 client_id: cognitoResponse.UserPoolClient.ClientId,
                 client_metadata: JSON.stringify(registrationResponse),
@@ -259,38 +290,42 @@ Resources:
                 TableName: DCR_CLIENTS_TABLE,
                 Item: marshall(dynamoItem)
               };
-              
+              // DynamoDBにクライアントメタデータを保存
               const putItemCommand = new PutItemCommand(putItemParams);
               await dynamoClient.send(putItemCommand);
               
-              console.log('Client registration stored in DynamoDB');
+              console.log('クライアント登録情報をDynamoDBに保存完了');
               
-              // Return successful response
+              // 成功レスポンスを返す
               return formatResponse(201, registrationResponse);
             } catch (error) {
-              console.error('Error in client registration:', error);
+              console.error('クライアント登録エラー:', error);
               
               return formatResponse(500, {
                 error: 'server_error',
-                error_description: 'An error occurred during client registration'
+                error_description: 'クライアント登録中にエラーが発生しました'
               });
             }
           };
 
           /**
-           * Format the API Gateway response
+           * API Gatewayレスポンスをフォーマット
            */
           function formatResponse(statusCode, body) {
             return {
               statusCode,
               headers: {
                 'Content-Type': 'application/json',
-                'Cache-Control': 'no-store'
+                'Cache-Control': 'no-store'  // キャッシュ無効化（セキュリティ）
               },
               body: JSON.stringify(body)
             };
           }
   
+  # =====================================================
+  # Lambda関数: クライアント情報取得
+  # 登録済みクライアントの情報を取得するAPI
+  # =====================================================
   GetClientFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -308,30 +343,30 @@ Resources:
           const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
           const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
-          // Initialize AWS SDK client
+          // AWS SDKクライアントの初期化
           const dynamoClient = new DynamoDBClient();
 
-          // Configuration
+          // 設定
           const DCR_CLIENTS_TABLE = process.env.DCR_CLIENTS_TABLE;
 
           /**
-           * Lambda function to get client registration information
+           * クライアント登録情報を取得するLambda関数
            */
           exports.handler = async (event) => {
             try {
-              console.log('Event received:', JSON.stringify(event));
+              console.log('受信イベント:', JSON.stringify(event));
               
-              // Get client_id from path parameters
+              // パスパラメータからclient_idを取得
               const clientId = event.pathParameters?.client_id;
               
               if (!clientId) {
                 return formatResponse(400, {
                   error: 'invalid_request',
-                  error_description: 'client_id is required'
+                  error_description: 'client_idが必要です'
                 });
               }
               
-              // Get client data from DynamoDB
+              // DynamoDBからクライアントデータを取得
               const getItemParams = {
                 TableName: DCR_CLIENTS_TABLE,
                 Key: marshall({ client_id: clientId })
@@ -343,30 +378,30 @@ Resources:
               if (!response.Item) {
                 return formatResponse(404, {
                   error: 'invalid_client',
-                  error_description: 'Client not found'
+                  error_description: 'クライアントが見つかりません'
                 });
               }
               
-              // Extract and return client metadata
+              // クライアントメタデータを抽出して返す
               const item = unmarshall(response.Item);
               const clientMetadata = JSON.parse(item.client_metadata);
               
-              // Remove sensitive information
+              // 機密情報を削除
               delete clientMetadata.client_secret;
               
               return formatResponse(200, clientMetadata);
             } catch (error) {
-              console.error('Error retrieving client information:', error);
+              console.error('クライアント情報取得エラー:', error);
               
               return formatResponse(500, {
                 error: 'server_error',
-                error_description: 'An error occurred while retrieving client information'
+                error_description: 'クライアント情報取得中にエラーが発生しました'
               });
             }
           };
 
           /**
-           * Format the API Gateway response
+           * API Gatewayレスポンスをフォーマット
            */
           function formatResponse(statusCode, body) {
             return {
@@ -379,17 +414,23 @@ Resources:
             };
           }
   
+  # =====================================================
   # API Gateway
+  # Dynamic Client Registration用のREST APIを提供
+  # =====================================================
   ApiGateway:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: !Sub ${ProjectName}-dcr-api
-      Description: API for Dynamic Client Registration with MCP OAuth 2.1
+      Description: MCP OAuth 2.1 Dynamic Client Registration用API
       EndpointConfiguration:
         Types:
-          - REGIONAL
+          - REGIONAL  # リージョナルエンドポイント（レイテンシ最適化）
 
-  # Register Resource
+  # =====================================================
+  # API Gateway リソース: /register
+  # クライアント登録エンドポイント
+  # =====================================================
   RegisterResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -397,20 +438,26 @@ Resources:
       ParentId: !GetAtt ApiGateway.RootResourceId
       PathPart: register
 
-  # Register Method
+  # =====================================================
+  # API Gateway メソッド: POST /register
+  # RFC 7591準拠のクライアント登録API
+  # =====================================================
   RegisterMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref ApiGateway
       ResourceId: !Ref RegisterResource
       HttpMethod: POST
-      AuthorizationType: NONE
+      AuthorizationType: NONE  # 認証不要（匿名DCR）
       Integration:
-        Type: AWS_PROXY
+        Type: AWS_PROXY  # Lambda プロキシ統合
         IntegrationHttpMethod: POST
         Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegisterClientFunction.Arn}/invocations
 
-  # Clients Resource
+  # =====================================================
+  # API Gateway リソース: /clients
+  # クライアント情報取得のベースパス
+  # =====================================================
   ClientsResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -418,15 +465,21 @@ Resources:
       ParentId: !GetAtt ApiGateway.RootResourceId
       PathPart: clients
 
-  # Client ID Resource
+  # =====================================================
+  # API Gateway リソース: /clients/{client_id}
+  # 特定クライアントの情報取得パス
+  # =====================================================
   ClientIdResource:
     Type: AWS::ApiGateway::Resource
     Properties:
       RestApiId: !Ref ApiGateway
       ParentId: !Ref ClientsResource
-      PathPart: "{client_id}"
+      PathPart: "{client_id}"  # パスパラメータ
 
-  # Get Client Method
+  # =====================================================
+  # API Gateway メソッド: GET /clients/{client_id}
+  # 登録済みクライアント情報の取得API
+  # =====================================================
   GetClientMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -435,29 +488,36 @@ Resources:
       HttpMethod: GET
       AuthorizationType: NONE
       RequestParameters:
-        method.request.path.client_id: true
+        method.request.path.client_id: true  # client_idパラメータを必須に
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetClientFunction.Arn}/invocations
 
-  # API Gateway Deployment
+  # =====================================================
+  # API Gateway デプロイメント
+  # APIを実際に利用可能にする
+  # =====================================================
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
-    DependsOn:
+    DependsOn:  # メソッド作成後にデプロイを実行
       - RegisterMethod
       - GetClientMethod
     Properties:
       RestApiId: !Ref ApiGateway
-      StageName: v1
+      StageName: v1  # ステージ名（バージョン管理）
 
-  # Lambda Permissions
+  
+  # =====================================================
+  # Lambda実行権限
+  # API GatewayがLambda関数を呼び出すための権限設定
+  # =====================================================
   RegisterClientPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref RegisterClientFunction
-      Principal: apigateway.amazonaws.com
+      Principal: apigateway.amazonaws.com  # API Gatewayサービスに実行を許可
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/register
 
   GetClientPermission:
@@ -468,22 +528,25 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/GET/clients/{client_id}
 
-  # CORS Configuration for Register Resource
+  # =====================================================
+  # CORS設定: /register エンドポイント
+  # ブラウザからのクロスオリジンリクエストを許可
+  # =====================================================
   RegisterCorsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref ApiGateway
       ResourceId: !Ref RegisterResource
-      HttpMethod: OPTIONS
+      HttpMethod: OPTIONS  # プリフライトリクエスト用
       AuthorizationType: NONE
       Integration:
-        Type: MOCK
+        Type: MOCK  # モック統合（実際の処理は不要）
         IntegrationResponses:
           - StatusCode: 200
-            ResponseParameters:
+            ResponseParameters:  # CORSヘッダーの設定
               method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
               method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
-              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"  # 全オリジンを許可（開発用）
             ResponseTemplates:
               application/json: ''
         PassthroughBehavior: WHEN_NO_MATCH
@@ -496,41 +559,44 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
           ResponseModels:
-            application/json: 'Empty'
-
+            application/json: 'Empty'# =====================================================
+# 出力値
+# 他のスタックやアプリケーションから参照可能な値を定義
+# デプロイ完了後に表示される重要な接続情報
+# =====================================================
 Outputs:
   UserPoolId:
-    Description: "User Pool ID"
+    Description: "Cognitoユーザープール ID（認証設定で使用）"
     Value: !Ref UserPool
     Export:
       Name: !Sub "${ProjectName}-UserPoolId"
 
   UserPoolClientId:
-    Description: "Static User Pool Client ID"
+    Description: "静的クライアント用のユーザープールクライアントID"
     Value: !Ref UserPoolClient
     Export:
       Name: !Sub "${ProjectName}-UserPoolClientId"
 
   UserPoolDomain:
-    Description: "Cognito Domain"
+    Description: "CognitoホストUI用ドメイン（認証画面URL）"
     Value: !Sub "${ProjectName}-domain-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com"
     Export:
       Name: !Sub "${ProjectName}-UserPoolDomain"
 
   ApiGatewayUrl:
-    Description: "API Gateway URL for Dynamic Client Registration"
+    Description: "Dynamic Client Registration用API Gateway URL"
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/v1"
     Export:
       Name: !Sub "${ProjectName}-ApiGatewayUrl"
 
   DynamoDBTable:
-    Description: "DynamoDB Table for Client Registrations"
+    Description: "クライアント登録情報保存用DynamoDBテーブル"
     Value: !Ref DcrClientsTable
     Export:
       Name: !Sub "${ProjectName}-DcrClientsTable"
 
   RegisterClientEndpoint:
-    Description: "Endpoint for Dynamic Client Registration"
+    Description: "Dynamic Client Registration エンドポイント（クライアント登録用）"
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/v1/register"
     Export:
       Name: !Sub "${ProjectName}-RegisterClientEndpoint"
